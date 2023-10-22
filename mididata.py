@@ -5,9 +5,11 @@ import sqlite3
 import pathlib
 import subprocess
 import itertools
+import shutil
 import mido
 import tkinter as tk
 import tkinter.ttk as ttk
+import tkinter.filedialog as filedialog
 
 # {{{1 variables, arguments, utility functions
 home = pathlib.Path.home()
@@ -255,7 +257,26 @@ class DataFrame(ttk.LabelFrame):
         scrollconfig(self.tree,self.scrollbar)
         self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
         self.tree.bind("<Double-1>",self.doubleclick_callback)
-        self.tree.bind("<Control-.>",self.doubleclick_callback)
+        self.tree.bind("<Control-.>",self.copy_selected_to)
+    def copy_selected_to(self,event):
+        t = filedialog.askdirectory()
+        print("t:",t)
+        if not t:
+            return
+        target = pathlib.Path(t).resolve()
+        print("target:",target)
+        if not target.is_dir():
+            return
+        selected_files = list()
+        for iid in self.tree.selection():
+            item_values = self.tree.item(iid,"values")
+            path = item_values[1]
+            selected_files.append(pathlib.Path(path))
+        for p in selected_files:
+            if p.is_file():
+                print("p:",p)
+                shutil.copy(p,target)
+
 
 # }}}1
 # {{{1 FilterFrame
