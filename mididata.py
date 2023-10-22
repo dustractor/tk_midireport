@@ -9,10 +9,10 @@ import mido
 import tkinter as tk
 import tkinter.ttk as ttk
 
+# {{{1 variables, arguments, utility functions
 home = pathlib.Path.home()
 here = pathlib.Path(__file__).parent
 
-# _TESTING = True
 _TESTING = False
 
 _DBFILE =  here / "midis.db"
@@ -37,6 +37,17 @@ note_d = {a:b for (a,b) in zip(
 
 _ANYKEY = "*ANY*"
 
+pack_l = dict(fill="both",expand=True,side="left")
+pack_r= dict(fill="both",expand=True,side="right")
+pack_n= dict(fill="both",expand=True)
+pack_scroll = dict(fill="y",side="right",anchor="w")
+
+def scrollconfig(scroll,bar):
+    scroll.config(yscrollcommand=bar.set)
+    bar.config(command=scroll.yview)
+
+# }}}1
+# {{{1 MidiLibrarian
 class MidiLibrarian(sqlite3.Connection):
     ddl = """
     create table if not exists midis (
@@ -130,7 +141,8 @@ class MidiLibrarian(sqlite3.Connection):
             print("key,notecount:",key,notecount)
             return list(self.execute("select id,path,name from midis where keys=? and notecount=?",(key,notecount)))
 
-
+# }}}1
+# {{{1 MidiLibrary
 
 class MidiLibrary:
     _handle = None
@@ -142,16 +154,8 @@ class MidiLibrary:
                 factory=MidiLibrarian)
         return self._handle
 
-
-pack_l = dict(fill="both",expand=True,side="left")
-pack_r= dict(fill="both",expand=True,side="right")
-pack_n= dict(fill="both",expand=True)
-pack_scroll = dict(fill="y",side="right",anchor="w")
-
-def scrollconfig(scroll,bar):
-    scroll.config(yscrollcommand=bar.set)
-    bar.config(command=scroll.yview)
-
+# }}}1
+# {{{1 NoteCountFrame
 
 class NoteCountFrame(ttk.LabelFrame):
     def update_view(self):
@@ -181,6 +185,8 @@ class NoteCountFrame(ttk.LabelFrame):
         scrollconfig(self.listbox,self.scrollbar)
         self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
 
+# }}}1
+# {{{1 KeyFrame
 
 class KeyFrame(ttk.LabelFrame):
     def update_view(self):
@@ -210,6 +216,8 @@ class KeyFrame(ttk.LabelFrame):
         scrollconfig(self.listbox,self.scrollbar)
         self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
 
+# }}}1
+# {{{1 DataFrame
 
 class DataFrame(ttk.LabelFrame):
     def update_view(self):
@@ -249,6 +257,8 @@ class DataFrame(ttk.LabelFrame):
         self.tree.bind("<Double-1>",self.doubleclick_callback)
         self.tree.bind("<Control-.>",self.doubleclick_callback)
 
+# }}}1
+# {{{1 FilterFrame
 
 class FilterFrame(ttk.LabelFrame):
     def __init__(self,master):
@@ -259,6 +269,8 @@ class FilterFrame(ttk.LabelFrame):
         self.notecountframe = NoteCountFrame(self)
         self.notecountframe.pack(**pack_n)
 
+# }}}1
+# {{{1 MainFrame
 
 class MainFrame(tk.Frame):
     def __init__(self,master):
@@ -268,6 +280,8 @@ class MainFrame(tk.Frame):
         self.dataframe = DataFrame(self)
         self.dataframe.pack(**pack_r)
 
+# }}}1
+# {{{1 App
 
 class App(tk.Tk):
     def update_ui(self):
@@ -290,7 +304,7 @@ class App(tk.Tk):
         self.mainframe.filterframe.notecountframe.listbox.event_generate("<<ListboxSelect>>")
         
         # list(map(print,self.db.cx.iterdump()))
-
+# }}}1
 
 if __name__ == "__main__":
     App().mainloop()
