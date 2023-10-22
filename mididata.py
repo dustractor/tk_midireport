@@ -226,8 +226,10 @@ class DataFrame(ttk.LabelFrame):
         print("DataFrame View Update")
         self.tree.delete(*self.tree.get_children())
         print("Tree Cleared")
-        key = self.master.filterframe.keyframe.active_item.get()
-        notecount = self.master.filterframe.notecountframe.active_item.get()
+        key = self.winfo_toplevel().mainframe.filterframe.keyframe.active_item.get()
+        # key = self.master.filterframe.keyframe.active_item.get()
+        notecount = self.winfo_toplevel().mainframe.filterframe.notecountframe.active_item.get()
+        # notecount = self.master.filterframe.notecountframe.active_item.get()
         for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount):
             self.tree.insert("","end",text=name,values=(oid,path))
         self.active_item.set("key(s):{} notecount:{}".format(key,notecount))
@@ -258,7 +260,8 @@ class DataFrame(ttk.LabelFrame):
         self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
         self.tree.bind("<Double-1>",self.doubleclick_callback)
         self.tree.bind("<Control-.>",self.copy_selected_to)
-    def copy_selected_to(self,event):
+        
+    def copy_selected_to(self,*event_or_none):
         t = filedialog.askdirectory()
         print("t:",t)
         if not t:
@@ -276,7 +279,40 @@ class DataFrame(ttk.LabelFrame):
             if p.is_file():
                 print("p:",p)
                 shutil.copy(p,target)
+    def move_selected_to(self,*event_or_none):
+        t = filedialog.askdirectory()
+        print("t:",t)
+        if not t:
+            return
+        target = pathlib.Path(t).resolve()
+        print("target:",target)
+        if not target.is_dir():
+            return
+        selected_files = list()
+        for iid in self.tree.selection():
+            item_values = self.tree.item(iid,"values")
+            path = item_values[1]
+            selected_files.append(pathlib.Path(path))
+        for p in selected_files:
+            if p.is_file():
+                print("p:",p)
+                shutil.move(p,target)
 
+# }}}1
+# {{{1 ActionFrame
+
+class ActionFrame(ttk.LabelFrame):
+    def __init__(self,master):
+        super().__init__(master)
+        self.copybutton = tk.Button(self,
+                                    text="Copy to...",
+                                    command=self.winfo_toplevel().mainframe.dataframe.copy_selected_to)
+        self.copybutton.pack()
+        self.movebutton = tk.Button(self,
+                                    text="Move to...",
+                                    command=self.winfo_toplevel().mainframe.dataframe.move_selected_to)
+        self.movebutton.pack()
+        
 
 # }}}1
 # {{{1 FilterFrame
@@ -301,6 +337,7 @@ class MainFrame(tk.Frame):
         self.dataframe = DataFrame(self)
         self.dataframe.pack(**pack_r)
 
+
 # }}}1
 # {{{1 App
 
@@ -313,8 +350,14 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.geometry("1024x768")
-        self.mainframe = MainFrame(self)
+        self.topframe = tk.Frame(self)
+        self.topframe.pack(fill="both",expand=True,side="top")
+        self.bottomframe = tk.Frame(self)
+        self.bottomframe.pack(fill="x",expand=False,side="bottom")
+        self.mainframe = MainFrame(self.topframe)
         self.mainframe.pack(**pack_n)
+        self.actionframe = ActionFrame(self.bottomframe)
+        self.actionframe.pack(fill="both",expand=True)
         self.db = MidiLibrary()
         if ns.scan:
             self.db.cx.populate_from(ns.rootdir)
