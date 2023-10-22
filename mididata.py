@@ -223,29 +223,31 @@ class DataFrame(ttk.LabelFrame):
         self.active_item.set("key(s):{} notecount:{}".format(key,notecount))
     def selection_callback(self,event):
         selection = self.tree.selection()
+        print("len(selection):",len(selection))
         item_values = self.tree.item(selection,"values")
         path = item_values[1]
         self.active_item.set(path)
     def doubleclick_callback(self,event):
         selection = self.tree.selection()
-        item_values = self.tree.item(selection,"values")
-        path = item_values[1]
-        # self.active_item.set(path)
-        print("path:",path)
-        subprocess.run("explorer /select,\"{}\"".format(path),shell=True)
-
+        print("type(selection):",type(selection))
+        for t in selection:
+            item_values = self.tree.item(t,"values")
+            path = item_values[1]
+            print("path:",path)
+            subprocess.run("explorer /select,\"{}\"".format(path),shell=True)
     def __init__(self,master):
         super().__init__(master)
         self.active_item = tk.StringVar()
         self.framelabel = tk.Label(self,textvariable=self.active_item)
         self.configure(labelwidget=self.framelabel)
-        self.tree = ttk.Treeview(self,show="tree")
+        self.tree = ttk.Treeview(self,show="tree",selectmode="extended")
         self.tree.pack(**pack_l)
         self.scrollbar = tk.Scrollbar(self)
         self.scrollbar.pack(**pack_scroll)
         scrollconfig(self.tree,self.scrollbar)
         self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
         self.tree.bind("<Double-1>",self.doubleclick_callback)
+        self.tree.bind("<Control-.>",self.doubleclick_callback)
 
 
 class FilterFrame(ttk.LabelFrame):
