@@ -1,37 +1,42 @@
-import pathlib,argparse,os,sys,sqlite3,mido,subprocess
+import argparse
+import os
+import sys
+import sqlite3
+import pathlib
+import subprocess
+import itertools
+import mido
 import tkinter as tk
 import tkinter.ttk as ttk
-from itertools import cycle
 
 home = pathlib.Path.home()
 here = pathlib.Path(__file__).parent
+
 # _TESTING = True
 _TESTING = False
+
 _DBFILE =  here / "midis.db"
-_DEFAULTROOTDIR = home /"Documents"/"Image-Line"/"FL Studio"/"Presets"/"Scores" 
-_TESTINGROOT = home / "Desktop" / "testmidis"
+
+if _TESTING:
+    _ROOTDIR = home / "Desktop" / "testmidis"
+    _DBFILE.unlink()
+else:
+    _ROOTDIR = home /"Documents"/"Image-Line"/"FL Studio"/"Presets"/"Scores" 
 
 args = argparse.ArgumentParser()
 
-if _TESTING:
-    if _DBFILE.is_file():
-        _DBFILE.unlink()
-        print("removed database file")
-    args.add_argument("--scan",default=True)
-    args.add_argument("--rootdir",default=_TESTINGROOT)
-else:
-    args.add_argument("--scan",action="store_true")
-    args.add_argument("--rootdir",default=_DEFAULTROOTDIR)
+args.add_argument("--scan",action="store_true")
+args.add_argument("--rootdir",default=_ROOTDIR)
 
 ns = args.parse_args()
 
 note_d = {a:b for (a,b) in zip(
     range(128),
-    cycle(["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]))}
-
+    itertools.cycle(["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"])
+)}
 
 _ANYKEY = "*ANY*"
-_NOTECOUNTS = ["0","1-10","11-100","101-1000",">1000"]
+
 class MidiLibrarian(sqlite3.Connection):
     ddl = """
     create table if not exists midis (
@@ -45,29 +50,27 @@ class MidiLibrarian(sqlite3.Connection):
     errors text,
     unique (path) on conflict replace);
     """
-
     def __init__(self,name,**kwargs):
         super().__init__(name,**kwargs)
         self.executescript(self.ddl)
         self.commit()
-
     @property
     def cu(self):
         cu = self.cursor()
         cu.row_factory = lambda c,r:r[0]
         return cu
-
     def populate_from(self,path):
         for r,ds,fs in os.walk(path):
             root = pathlib.Path(r)
+            print("root:",root)
             for f in fs:
                 if f.endswith(".mid"):
                     error = False
                     fpath = root/f
+                    print("\tfpath:",fpath)
                     path = str(fpath)
                     _dir = str(fpath.parent)
                     name = str(fpath.stem)
-                    print("path,_dir,name:",path,_dir,name)
                     try:
                         mid = mido.MidiFile(fpath)
                     except OSError:
@@ -85,29 +88,52 @@ class MidiLibrarian(sqlite3.Connection):
                                     note_count += 1
                         if not len(key_sigs):
                             key_sigs.add("NONE")
-                        self.execute("insert into midis (path,dir,name,keys,notecount,noteset) values (?,?,?,?,?,?)",
-                        (path,_dir,name,
-                         "_".join(sorted(key_sigs)),
-                         str(sorted(note_set)),
-                         note_count))
+                        self.execute(
+                            "insert into midis"
+                            " (path,dir,name,keys,notecount,noteset)"
+                            " values (?,?,?,?,?,?)",
+                            (
+                                path,
+                                _dir,
+                                name,
+                                "_".join(sorted(key_sigs)),
+                                note_count,
+                                str(sorted(note_set)))
+                            )
                     else:
-                        self.execute("insert into midis (path,dir,name,errors) values (?,?,?,?)",
-                                   (path,_dir,name,
-                                    error))
+                        self.execute(
+                            "insert into midis"
+                            " (path,dir,name,errors) values (?,?,?,?)",
+                            (
+                                path,
+                                _dir,
+                                name,
+                                error)
+                            )
         self.commit()
-
-    def distinct_keys(self):
-        return list(self.cu.execute("select distinct keys from midis"))
-    def datatree_view(self,key):
-        if key == _ANYKEY:
+    def keys_view(self):
+        return [_ANYKEY] + list(self.cu.execute("select distinct keys from midis order by keys"))
+    def notecounts_view(self):
+        return [_ANYKEY] + list(self.cu.execute("select distinct notecount from midis order by notecount"))
+    def datatree_view(self,key,notecount):
+        print("[[[key,notecount:",key,notecount,"]]]")
+        if key == _ANYKEY and notecount == _ANYKEY:
+            print("any key/any notecount")
             return list(self.execute("select id,path,name from midis"))
-        else:
+        elif key == _ANYKEY:
+            print("any key")
+            return list(self.execute("select id,path,name from midis where notecount=?",(notecount,)))
+        elif notecount == _ANYKEY:
+            print("any notecount")
             return list(self.execute("select id,path,name from midis where keys=?",(key,)))
+        else:
+            print("key,notecount:",key,notecount)
+            return list(self.execute("select id,path,name from midis where keys=? and notecount=?",(key,notecount)))
+
 
 
 class MidiLibrary:
     _handle = None
-
     @property
     def cx(self):
         if not self._handle:
@@ -117,99 +143,153 @@ class MidiLibrary:
         return self._handle
 
 
+pack_l = dict(fill="both",expand=True,side="left")
+pack_r= dict(fill="both",expand=True,side="right")
+pack_n= dict(fill="both",expand=True)
+pack_scroll = dict(fill="y",side="right",anchor="w")
+
+def scrollconfig(scroll,bar):
+    scroll.config(yscrollcommand=bar.set)
+    bar.config(command=scroll.yview)
+
+
+class NoteCountFrame(ttk.LabelFrame):
+    def update_view(self):
+        if not len(self.listv.get()):
+            print("NoteCountFrame View Update...",end="")
+            self.listv.set(self.winfo_toplevel().db.cx.notecounts_view())
+            # self.listbox.selection_set(0)
+            print("Complete")
+        else:
+            print("NoteCountFrame View Update Skipped")
+    def selection_callback(self,event):
+        index = self.listbox.curselection()
+        if len(index):
+            item = self.listbox.get(index[0])
+            self.active_item.set(item)
+            self.winfo_toplevel().update_ui()
+    def __init__(self,master):
+        super().__init__(master)
+        self.listv = tk.StringVar()
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
+        self.listbox.pack(**pack_l)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.listbox,self.scrollbar)
+        self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
+
+
+class KeyFrame(ttk.LabelFrame):
+    def update_view(self):
+        if not len(self.listv.get()):
+            print("KeyFrame View Update...",end="")
+            self.listv.set(self.winfo_toplevel().db.cx.keys_view())
+            # self.listbox.selection_set(0)
+            print("Complete")
+        else:
+            print("KeyFrame View Update Skipped")
+    def selection_callback(self,event):
+        index = self.listbox.curselection()
+        if len(index):
+            item = self.listbox.get(index[0])
+            self.active_item.set(item)
+            self.winfo_toplevel().update_ui()
+    def __init__(self,master):
+        super().__init__(master)
+        self.listv = tk.StringVar()
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
+        self.listbox.pack(**pack_l)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.listbox,self.scrollbar)
+        self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
+
+
+class DataFrame(ttk.LabelFrame):
+    def update_view(self):
+        print("DataFrame View Update")
+        self.tree.delete(*self.tree.get_children())
+        print("Tree Cleared")
+        key = self.master.filterframe.keyframe.active_item.get()
+        notecount = self.master.filterframe.notecountframe.active_item.get()
+        for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount):
+            self.tree.insert("","end",text=name,values=(oid,path))
+        self.active_item.set("key(s):{} notecount:{}".format(key,notecount))
+    def selection_callback(self,event):
+        selection = self.tree.selection()
+        item_values = self.tree.item(selection,"values")
+        path = item_values[1]
+        self.active_item.set(path)
+    def doubleclick_callback(self,event):
+        selection = self.tree.selection()
+        item_values = self.tree.item(selection,"values")
+        path = item_values[1]
+        # self.active_item.set(path)
+        print("path:",path)
+        subprocess.run("explorer /select,\"{}\"".format(path),shell=True)
+
+    def __init__(self,master):
+        super().__init__(master)
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.tree = ttk.Treeview(self,show="tree")
+        self.tree.pack(**pack_l)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.tree,self.scrollbar)
+        self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
+        self.tree.bind("<Double-1>",self.doubleclick_callback)
+
+
+class FilterFrame(ttk.LabelFrame):
+    def __init__(self,master):
+        super().__init__(master)
+        self.configure(text="Filters")
+        self.keyframe = KeyFrame(self)
+        self.keyframe.pack(**pack_n)
+        self.notecountframe = NoteCountFrame(self)
+        self.notecountframe.pack(**pack_n)
+
+
+class MainFrame(tk.Frame):
+    def __init__(self,master):
+        super().__init__(master)
+        self.filterframe = FilterFrame(self)
+        self.filterframe.pack(fill="y",side="left")
+        self.dataframe = DataFrame(self)
+        self.dataframe.pack(**pack_r)
+
+
 class App(tk.Tk):
     def update_ui(self):
-        self.keys.set([_ANYKEY]+list(db.cx.distinct_keys()))
-        active_key = self.active_key.get()
-        if active_key:
-            self.fill_datatree(active_key)
-        else:
-            self.clear_datatree()
-
-    def clear_datatree(self):
-        self.datatree.delete(*self.datatree.get_children())
-
-    def fill_datatree(self,key):
-        self.clear_datatree()
-        for t in db.cx.datatree_view(key):
-            self.datatree.insert("","end",text=t[2],values=(t[0],t[1]))
-
-    def keylist_select(self,event):
-        index = self.keylist.curselection()
-        if len(index):
-            item = self.keylist.get(index[0])
-            self.active_key.set(item)
-        self.update_ui()
-
-    def datatree_select(self,event):
-        selection = self.datatree.selection()
-        t = self.datatree.item(selection,"values")
-        path = t[1]
-        self.active_data.set(path)
-
-    def notectlist_select(self,event):
-        index = self.notectlist.curselection()
-        if len(index):
-            item = self.notectlist.get(index[0])
-            self.active_notecount.set(item)
-        self.update_ui()
-
-    def data_action(self):
-        data = self.active_data.get()
-        print("data:",data)
-        subprocess.run("explorer /select,\"{}\"".format(data),shell=True)
-
+        print("Updating UI")
+        self.mainframe.filterframe.keyframe.update_view()
+        self.mainframe.filterframe.notecountframe.update_view()
+        self.mainframe.dataframe.update_view()
     def __init__(self):
         super().__init__()
-        self.keys = tk.StringVar()
-        self.active_key = tk.StringVar()
-        self.active_data = tk.StringVar()
-        self.active_notecount = tk.StringVar()
-        self.notecounts = tk.StringVar()
-        self.notecounts.set(_NOTECOUNTS)
-        
-
-        self.activekeylabel = tk.Label(self,textvariable=self.active_key)
-        self.activedatalabel = tk.Button(self,command=self.data_action,textvariable=self.active_data)
-        self.activenotectlabel = tk.Label(self,textvariable=self.active_notecount)
-        self.mainframe = ttk.LabelFrame(self,text="Midi File Data")
-        self.mainframe.pack(fill="both",expand=True)
-        self.filterframe = ttk.Frame(self.mainframe)
-        self.filterframe.pack(fill="both",expand=True,side="left")
-        self.keyframe = ttk.LabelFrame(self.filterframe,labelwidget=self.activekeylabel)
-        self.keyframe.pack(fill="both",expand=True)
-        self.notectframe = ttk.LabelFrame(self.filterframe,labelwidget=self.activenotectlabel)
-        self.notectframe.pack(fill="both",expand=True)
-        self.dataframe = ttk.LabelFrame(self.mainframe,labelwidget=self.activedatalabel)
-        self.dataframe.pack(fill="both",expand=True,side="right")
-        self.keylist = tk.Listbox(self.keyframe,listvariable=self.keys)
-        self.keylist.pack(fill="both",expand=True,side="left")
-        self.keylistscroll = tk.Scrollbar(self.keyframe)
-        self.keylistscroll.pack(fill="y",side="right",anchor="w")
-        self.keylist.configure(yscrollcommand=self.keylistscroll.set)
-        self.keylistscroll.configure(command=self.keylist.yview)
-        self.notectlist = tk.Listbox(self.notectframe,listvariable=self.notecounts)
-        self.notectlist.pack(fill="both",expand=True,side="left")
-        self.notectscroll = tk.Scrollbar(self.notectframe)
-        self.notectscroll.pack(fill="y",side="right",anchor="w")
-        self.notectlist.configure(yscrollcommand=self.notectscroll.set)
-        self.notectscroll.configure(command=self.notectlist.yview)
-        self.datatree = ttk.Treeview(self.dataframe)
-        self.datatree.pack(fill="both",expand=True,side="left")
-        self.datatreescroll = tk.Scrollbar(self.dataframe)
-        self.datatreescroll.pack(fill="y",side="right",anchor="w")
-        self.datatree.configure(yscrollcommand=self.datatreescroll.set,show="tree")
-        self.datatreescroll.configure(command=self.datatree.yview)
-        self.keylist.bind("<<ListboxSelect>>",self.keylist_select)
-        self.datatree.bind("<<TreeviewSelect>>",self.datatree_select)
-        self.notectlist.bind("<<ListboxSelect>>",self.notectlist_select)
+        self.geometry("1024x768")
+        self.mainframe = MainFrame(self)
+        self.mainframe.pack(**pack_n)
+        self.db = MidiLibrary()
+        if ns.scan:
+            self.db.cx.populate_from(ns.rootdir)
         self.update_ui()
+        self.mainframe.filterframe.keyframe.listbox.selection_set(0)
+        self.mainframe.filterframe.keyframe.listbox.event_generate("<<ListboxSelect>>")
+        self.mainframe.filterframe.notecountframe.listbox.selection_set(0)
+        self.mainframe.filterframe.notecountframe.listbox.event_generate("<<ListboxSelect>>")
+        
+        # list(map(print,self.db.cx.iterdump()))
 
 
 if __name__ == "__main__":
-    db = MidiLibrary()
-    if ns.scan:
-        db.cx.populate_from(ns.rootdir)
-    app = App()
-    app.mainloop()
+    App().mainloop()
 
