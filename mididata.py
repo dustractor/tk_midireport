@@ -21,7 +21,8 @@ _DBFILE =  here / "midis.db"
 
 if _TESTING:
     _ROOTDIR = home / "Desktop" / "testmidis"
-    _DBFILE.unlink()
+    if _DBFILE.is_file():
+        _DBFILE.unlink()
 else:
     _ROOTDIR = home /"Documents"/"Image-Line"/"FL Studio"/"Presets"/"Scores" 
 
@@ -39,9 +40,9 @@ note_d = {a:b for (a,b) in zip(
 
 _ANYKEY = "*ANY*"
 
-pack_l = dict(fill="both",expand=True,side="left")
-pack_r= dict(fill="both",expand=True,side="right")
-pack_n= dict(fill="both",expand=True)
+pack_left = dict(fill="both",expand=True,side="left")
+pack_right= dict(fill="both",expand=True,side="right")
+pack_normal= dict(fill="both",expand=True)
 pack_scroll = dict(fill="y",side="right",anchor="w")
 
 def scrollconfig(scroll,bar):
@@ -60,6 +61,9 @@ class MidiLibrarian(sqlite3.Connection):
     keys text,
     notecount integer,
     noteset text,
+    different_notes integer,
+    different_times integer,
+    tracks integer,
     errors text,
     unique (path) on conflict replace);
     """
@@ -89,6 +93,9 @@ class MidiLibrarian(sqlite3.Connection):
                     except OSError:
                         error = str(sys.exc_info()[1])
                     if not error:
+                        different_notes = set()
+                        different_times = set()
+                        tracks = len(mid.tracks)
                         note_set = set()
                         key_sigs = set()
                         note_count = 0
@@ -97,21 +104,27 @@ class MidiLibrarian(sqlite3.Connection):
                                 if message.type == "key_signature":
                                     key_sigs.add(message.key)
                                 if message.type == "note_on":
+                                    different_notes.add(message.note)
+                                    different_times.add(message.time)
                                     note_set.add(note_d[message.note])
                                     note_count += 1
+
                         if not len(key_sigs):
                             key_sigs.add("NONE")
                         self.execute(
                             "insert into midis"
-                            " (path,dir,name,keys,notecount,noteset)"
-                            " values (?,?,?,?,?,?)",
+                            " (path,dir,name,keys,notecount,noteset,different_notes,different_times)"
+                            " values (?,?,?,?,?,?,?,?)",
                             (
                                 path,
                                 _dir,
                                 name,
                                 "_".join(sorted(key_sigs)),
                                 note_count,
-                                str(sorted(note_set)))
+                                str(sorted(note_set)),
+                                len(different_notes),
+                                len(different_times)
+                            )
                             )
                     else:
                         self.execute(
@@ -128,20 +141,50 @@ class MidiLibrarian(sqlite3.Connection):
         return [_ANYKEY] + list(self.cu.execute("select distinct keys from midis order by keys"))
     def notecounts_view(self):
         return [_ANYKEY] + list(self.cu.execute("select distinct notecount from midis order by notecount"))
-    def datatree_view(self,key,notecount):
-        print("[[[key,notecount:",key,notecount,"]]]")
-        if key == _ANYKEY and notecount == _ANYKEY:
-            print("any key/any notecount")
-            return list(self.execute("select id,path,name from midis"))
-        elif key == _ANYKEY:
-            print("any key")
-            return list(self.execute("select id,path,name from midis where notecount=?",(notecount,)))
-        elif notecount == _ANYKEY:
-            print("any notecount")
-            return list(self.execute("select id,path,name from midis where keys=?",(key,)))
+    def different_notes_view(self):
+        return [_ANYKEY] + list(self.cu.execute("select distinct different_notes from midis order by different_notes"))
+    def different_times_view(self):
+        return [_ANYKEY] + list(self.cu.execute("select distinct different_times from midis order by different_times"))
+    def datatree_view(self,key,notecount,different_notes,different_times):
+        whereclauses = list()
+        qargs = list()
+        if (key == _ANYKEY) and (notecount == _ANYKEY) and (different_notes == _ANYKEY) and (different_times == _ANYKEY):
+            sql = "select id,path,name from midis"
         else:
-            print("key,notecount:",key,notecount)
-            return list(self.execute("select id,path,name from midis where keys=? and notecount=?",(key,notecount)))
+            sqlfmt = "select id,path,name from midis where {}"
+            if key != _ANYKEY:
+                whereclauses.append("keys=?")
+                qargs.append(key)
+            if notecount != _ANYKEY:
+                whereclauses.append("notecount=?")
+                qargs.append(notecount)
+            if different_notes != _ANYKEY:
+                whereclauses.append("different_notes=?")
+                qargs.append(different_notes)
+            if different_times != _ANYKEY:
+                whereclauses.append("different_times=?")
+                qargs.append(different_times)
+            sql = sqlfmt.format(" and ".join(whereclauses))
+        print("sql:",sql)
+        print("qargs:",qargs)
+        if not qargs:
+            return list(self.execute(sql))
+        else:
+            return list(self.execute(sql,qargs))
+
+
+        # if key == _ANYKEY and notecount == _ANYKEY and different_notes == _ANYKEY and different_times == _ANYKEY:
+        #     print("any key/any notecount/any different_notes/any different_times")
+        #     return list(self.execute("select id,path,name from midis"))
+        # elif key == _ANYKEY:
+        #     print("any key")
+        #     return list(self.execute("select id,path,name from midis where notecount=?",(notecount,)))
+        # elif notecount == _ANYKEY:
+        #     print("any notecount")
+        #     return list(self.execute("select id,path,name from midis where keys=?",(key,)))
+        # else:
+        #     print("key,notecount:",key,notecount)
+        #     return list(self.execute("select id,path,name from midis where keys=? and notecount=?",(key,notecount)))
 
 # }}}1
 # {{{1 MidiLibrary
@@ -155,6 +198,66 @@ class MidiLibrary:
                 _DBFILE,
                 factory=MidiLibrarian)
         return self._handle
+
+# }}}1
+# {{{1 DifferentNotesFrame
+
+class DifferentNotesFrame(ttk.LabelFrame):
+    def update_view(self):
+        if not len(self.listv.get()):
+            print("DifferentNotesFrame View Update...",end="")
+            self.listv.set(self.winfo_toplevel().db.cx.different_notes_view())
+            print("Complete")
+        else:
+            print("DifferentNotesFrame View Update Skipped")
+    def selection_callback(self,event):
+        index = self.listbox.curselection()
+        if len(index):
+            item = self.listbox.get(index[0])
+            self.active_item.set(item)
+            self.winfo_toplevel().update_ui()
+    def __init__(self,master):
+        super().__init__(master)
+        self.listv = tk.StringVar()
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
+        self.listbox.pack(**pack_left)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.listbox,self.scrollbar)
+        self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
+
+# }}}1
+# {{{1 NoteCountFrame
+
+class DifferentTimesFrame(ttk.LabelFrame):
+    def update_view(self):
+        if not len(self.listv.get()):
+            print("DifferentTimesFrame View Update...",end="")
+            self.listv.set(self.winfo_toplevel().db.cx.different_times_view())
+            print("Complete")
+        else:
+            print("DifferentTimesFrame View Update Skipped")
+    def selection_callback(self,event):
+        index = self.listbox.curselection()
+        if len(index):
+            item = self.listbox.get(index[0])
+            self.active_item.set(item)
+            self.winfo_toplevel().update_ui()
+    def __init__(self,master):
+        super().__init__(master)
+        self.listv = tk.StringVar()
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
+        self.listbox.pack(**pack_left)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.listbox,self.scrollbar)
+        self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
 
 # }}}1
 # {{{1 NoteCountFrame
@@ -181,7 +284,7 @@ class NoteCountFrame(ttk.LabelFrame):
         self.framelabel = tk.Label(self,textvariable=self.active_item)
         self.configure(labelwidget=self.framelabel)
         self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
-        self.listbox.pack(**pack_l)
+        self.listbox.pack(**pack_left)
         self.scrollbar = tk.Scrollbar(self)
         self.scrollbar.pack(**pack_scroll)
         scrollconfig(self.listbox,self.scrollbar)
@@ -195,7 +298,6 @@ class KeyFrame(ttk.LabelFrame):
         if not len(self.listv.get()):
             print("KeyFrame View Update...",end="")
             self.listv.set(self.winfo_toplevel().db.cx.keys_view())
-            # self.listbox.selection_set(0)
             print("Complete")
         else:
             print("KeyFrame View Update Skipped")
@@ -212,7 +314,7 @@ class KeyFrame(ttk.LabelFrame):
         self.framelabel = tk.Label(self,textvariable=self.active_item)
         self.configure(labelwidget=self.framelabel)
         self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
-        self.listbox.pack(**pack_l)
+        self.listbox.pack(**pack_left)
         self.scrollbar = tk.Scrollbar(self)
         self.scrollbar.pack(**pack_scroll)
         scrollconfig(self.listbox,self.scrollbar)
@@ -226,13 +328,16 @@ class DataFrame(ttk.LabelFrame):
         print("DataFrame View Update")
         self.tree.delete(*self.tree.get_children())
         print("Tree Cleared")
-        key = self.winfo_toplevel().mainframe.filterframe.keyframe.active_item.get()
-        # key = self.master.filterframe.keyframe.active_item.get()
-        notecount = self.winfo_toplevel().mainframe.filterframe.notecountframe.active_item.get()
-        # notecount = self.master.filterframe.notecountframe.active_item.get()
-        for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount):
+        filterframe = self.winfo_toplevel().mainframe.filterframe
+        key = filterframe.keyframe.active_item.get()
+        notecount = filterframe.notecountframe.active_item.get()
+        different_notes = filterframe.different_notesframe.active_item.get()
+        different_times = filterframe.different_timesframe.active_item.get()
+        for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount,different_notes,different_times):
             self.tree.insert("","end",text=name,values=(oid,path))
-        self.active_item.set("key(s):{} notecount:{}".format(key,notecount))
+        self.active_item.set(
+            "key(s):{} | notecount:{} | different notes:{} | different times:{}".format(
+                key,notecount,different_notes,different_times))
     def selection_callback(self,event):
         selection = self.tree.selection()
         print("len(selection):",len(selection))
@@ -253,7 +358,7 @@ class DataFrame(ttk.LabelFrame):
         self.framelabel = tk.Label(self,textvariable=self.active_item)
         self.configure(labelwidget=self.framelabel)
         self.tree = ttk.Treeview(self,show="tree",selectmode="extended")
-        self.tree.pack(**pack_l)
+        self.tree.pack(**pack_left)
         self.scrollbar = tk.Scrollbar(self)
         self.scrollbar.pack(**pack_scroll)
         scrollconfig(self.tree,self.scrollbar)
@@ -322,9 +427,13 @@ class FilterFrame(ttk.LabelFrame):
         super().__init__(master)
         self.configure(text="Filters")
         self.keyframe = KeyFrame(self)
-        self.keyframe.pack(**pack_n)
+        self.keyframe.pack(**pack_normal)
         self.notecountframe = NoteCountFrame(self)
-        self.notecountframe.pack(**pack_n)
+        self.notecountframe.pack(**pack_normal)
+        self.different_notesframe = DifferentNotesFrame(self)
+        self.different_notesframe.pack(**pack_normal)
+        self.different_timesframe = DifferentTimesFrame(self)
+        self.different_timesframe.pack(**pack_normal)
 
 # }}}1
 # {{{1 MainFrame
@@ -335,8 +444,7 @@ class MainFrame(tk.Frame):
         self.filterframe = FilterFrame(self)
         self.filterframe.pack(fill="y",side="left")
         self.dataframe = DataFrame(self)
-        self.dataframe.pack(**pack_r)
-
+        self.dataframe.pack(**pack_right)
 
 # }}}1
 # {{{1 App
@@ -346,28 +454,39 @@ class App(tk.Tk):
         print("Updating UI")
         self.mainframe.filterframe.keyframe.update_view()
         self.mainframe.filterframe.notecountframe.update_view()
+        self.mainframe.filterframe.different_notesframe.update_view()
+        self.mainframe.filterframe.different_timesframe.update_view()
         self.mainframe.dataframe.update_view()
     def __init__(self):
         super().__init__()
-        self.geometry("1024x768")
+        self.geometry("1200x1000")
         self.topframe = tk.Frame(self)
         self.topframe.pack(fill="both",expand=True,side="top")
         self.bottomframe = tk.Frame(self)
         self.bottomframe.pack(fill="x",expand=False,side="bottom")
         self.mainframe = MainFrame(self.topframe)
-        self.mainframe.pack(**pack_n)
+        self.mainframe.pack(**pack_normal)
         self.actionframe = ActionFrame(self.bottomframe)
         self.actionframe.pack(fill="both",expand=True)
         self.db = MidiLibrary()
         if ns.scan:
             self.db.cx.populate_from(ns.rootdir)
         self.update_ui()
-        self.mainframe.filterframe.keyframe.listbox.selection_set(0)
-        self.mainframe.filterframe.keyframe.listbox.event_generate("<<ListboxSelect>>")
-        self.mainframe.filterframe.notecountframe.listbox.selection_set(0)
-        self.mainframe.filterframe.notecountframe.listbox.event_generate("<<ListboxSelect>>")
+        ff = self.mainframe.filterframe
+        ff.keyframe.listbox.selection_set(0)
+        ff.keyframe.listbox.event_generate("<<ListboxSelect>>")
+
+        ff.notecountframe.listbox.selection_set(0)
+        ff.notecountframe.listbox.event_generate("<<ListboxSelect>>")
+
+        ff.different_notesframe.listbox.selection_set(0)
+        ff.different_notesframe.listbox.event_generate("<<ListboxSelect>>")
+
+        ff.different_timesframe.listbox.selection_set(0)
+        ff.different_timesframe.listbox.event_generate("<<ListboxSelect>>")
         
-        # list(map(print,self.db.cx.iterdump()))
+        list(map(print,self.db.cx.iterdump()))
+        print("Remember: run with --scan at least once!")
 # }}}1
 
 if __name__ == "__main__":
