@@ -426,12 +426,23 @@ class FilterFrame(ttk.LabelFrame):
     def __init__(self,master):
         super().__init__(master)
         self.configure(text="Filters")
+
+        self.keylabel = tk.Label(self,text="Key Signature(s)")
+        self.keylabel.pack()
         self.keyframe = KeyFrame(self)
         self.keyframe.pack(**pack_normal)
+
+        self.notecountlable = tk.Label(self,text="Total Notes")
+        self.notecountlable.pack()
         self.notecountframe = NoteCountFrame(self)
         self.notecountframe.pack(**pack_normal)
+
+        self.diffnoteslabel = tk.Label(self,text="Distinct Notes")
+        self.diffnoteslabel.pack()
         self.different_notesframe = DifferentNotesFrame(self)
         self.different_notesframe.pack(**pack_normal)
+        self.diffnoteslabel = tk.Label(self,text="Distinct Times")
+        self.diffnoteslabel.pack()
         self.different_timesframe = DifferentTimesFrame(self)
         self.different_timesframe.pack(**pack_normal)
 
