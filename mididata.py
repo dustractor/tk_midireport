@@ -113,9 +113,8 @@ class MidiLibrarian(sqlite3.Connection):
                             key_sigs.add("NONE")
                         self.execute(
                             "insert into midis"
-                            " (path,dir,name,keys,notecount,noteset,different_notes,different_times)"
-                            " values (?,?,?,?,?,?,?,?)",
-                            (
+                            " (path,dir,name,keys,notecount,noteset,different_notes,different_times,tracks)"
+                            " values (?,?,?,?,?,?,?,?,?)",(
                                 path,
                                 _dir,
                                 name,
@@ -123,9 +122,8 @@ class MidiLibrarian(sqlite3.Connection):
                                 note_count,
                                 str(sorted(note_set)),
                                 len(different_notes),
-                                len(different_times)
-                            )
-                            )
+                                len(different_times),
+                                tracks))
                     else:
                         self.execute(
                             "insert into midis"
@@ -145,10 +143,17 @@ class MidiLibrarian(sqlite3.Connection):
         return [_ANYKEY] + list(self.cu.execute("select distinct different_notes from midis order by different_notes"))
     def different_times_view(self):
         return [_ANYKEY] + list(self.cu.execute("select distinct different_times from midis order by different_times"))
-    def datatree_view(self,key,notecount,different_notes,different_times):
+    def trackcount_view(self):
+        return [_ANYKEY] + list(self.cu.execute("select distinct tracks from midis order by tracks"))
+    def datatree_view(self,key,notecount,different_notes,different_times,trackcount):
         whereclauses = list()
         qargs = list()
-        if (key == _ANYKEY) and (notecount == _ANYKEY) and (different_notes == _ANYKEY) and (different_times == _ANYKEY):
+        if (
+            (key == _ANYKEY) and
+            (notecount == _ANYKEY) and
+            (different_notes == _ANYKEY) and
+            (different_times == _ANYKEY) and
+            (trackcount == _ANYKEY)):
             sql = "select id,path,name from midis"
         else:
             sqlfmt = "select id,path,name from midis where {}"
@@ -164,6 +169,9 @@ class MidiLibrarian(sqlite3.Connection):
             if different_times != _ANYKEY:
                 whereclauses.append("different_times=?")
                 qargs.append(different_times)
+            if trackcount != _ANYKEY:
+                whereclauses.append("tracks=?")
+                qargs.append(trackcount)
             sql = sqlfmt.format(" and ".join(whereclauses))
         print("sql:",sql)
         print("qargs:",qargs)
@@ -171,20 +179,6 @@ class MidiLibrarian(sqlite3.Connection):
             return list(self.execute(sql))
         else:
             return list(self.execute(sql,qargs))
-
-
-        # if key == _ANYKEY and notecount == _ANYKEY and different_notes == _ANYKEY and different_times == _ANYKEY:
-        #     print("any key/any notecount/any different_notes/any different_times")
-        #     return list(self.execute("select id,path,name from midis"))
-        # elif key == _ANYKEY:
-        #     print("any key")
-        #     return list(self.execute("select id,path,name from midis where notecount=?",(notecount,)))
-        # elif notecount == _ANYKEY:
-        #     print("any notecount")
-        #     return list(self.execute("select id,path,name from midis where keys=?",(key,)))
-        # else:
-        #     print("key,notecount:",key,notecount)
-        #     return list(self.execute("select id,path,name from midis where keys=? and notecount=?",(key,notecount)))
 
 # }}}1
 # {{{1 MidiLibrary
@@ -321,6 +315,36 @@ class KeyFrame(ttk.LabelFrame):
         self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
 
 # }}}1
+# {{{1 TrackCountFrame
+
+class TrackCountFrame(ttk.LabelFrame):
+    def update_view(self):
+        if not len(self.listv.get()):
+            print("TrackCountFrame View Update...",end="")
+            self.listv.set(self.winfo_toplevel().db.cx.trackcount_view())
+            print("Complete")
+        else:
+            print("TrackCountFrame View Update Skipped")
+    def selection_callback(self,event):
+        index = self.listbox.curselection()
+        if len(index):
+            item = self.listbox.get(index[0])
+            self.active_item.set(item)
+            self.winfo_toplevel().update_ui()
+    def __init__(self,master):
+        super().__init__(master)
+        self.listv = tk.StringVar()
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.listbox = tk.Listbox(self,listvariable=self.listv,width=16)
+        self.listbox.pack(**pack_left)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.listbox,self.scrollbar)
+        self.listbox.bind("<<ListboxSelect>>",self.selection_callback)
+
+# }}}1
 # {{{1 DataFrame
 
 class DataFrame(ttk.LabelFrame):
@@ -333,11 +357,12 @@ class DataFrame(ttk.LabelFrame):
         notecount = filterframe.notecountframe.active_item.get()
         different_notes = filterframe.different_notesframe.active_item.get()
         different_times = filterframe.different_timesframe.active_item.get()
-        for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount,different_notes,different_times):
+        trackcount = filterframe.trackcountframe.active_item.get()
+        for oid,path,name in self.winfo_toplevel().db.cx.datatree_view(key,notecount,different_notes,different_times,trackcount):
             self.tree.insert("","end",text=name,values=(oid,path))
         self.active_item.set(
-            "key(s):{} | notecount:{} | different notes:{} | different times:{}".format(
-                key,notecount,different_notes,different_times))
+            "key(s):{} | notecount:{} | different notes:{} | different times:{} | track count:{}".format(
+                key,notecount,different_notes,different_times,trackcount))
     def selection_callback(self,event):
         selection = self.tree.selection()
         print("len(selection):",len(selection))
@@ -441,10 +466,17 @@ class FilterFrame(ttk.LabelFrame):
         self.diffnoteslabel.pack()
         self.different_notesframe = DifferentNotesFrame(self)
         self.different_notesframe.pack(**pack_normal)
+
         self.diffnoteslabel = tk.Label(self,text="Distinct Times")
         self.diffnoteslabel.pack()
         self.different_timesframe = DifferentTimesFrame(self)
         self.different_timesframe.pack(**pack_normal)
+
+        self.trackcountlabel = tk.Label(self,text="Track Count")
+        self.trackcountlabel.pack()
+        self.trackcountframe = TrackCountFrame(self)
+        self.trackcountframe.pack(**pack_normal)
+
 
 # }}}1
 # {{{1 MainFrame
@@ -467,6 +499,7 @@ class App(tk.Tk):
         self.mainframe.filterframe.notecountframe.update_view()
         self.mainframe.filterframe.different_notesframe.update_view()
         self.mainframe.filterframe.different_timesframe.update_view()
+        self.mainframe.filterframe.trackcountframe.update_view()
         self.mainframe.dataframe.update_view()
     def __init__(self):
         super().__init__()
@@ -495,6 +528,9 @@ class App(tk.Tk):
 
         ff.different_timesframe.listbox.selection_set(0)
         ff.different_timesframe.listbox.event_generate("<<ListboxSelect>>")
+
+        ff.trackcountframe.listbox.selection_set(0)
+        ff.trackcountframe.listbox.event_generate("<<ListboxSelect>>")
         
         list(map(print,self.db.cx.iterdump()))
         print("Remember: run with --scan at least once!")
