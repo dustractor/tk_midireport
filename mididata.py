@@ -348,6 +348,19 @@ class TrackCountFrame(ttk.LabelFrame):
 # {{{1 DataFrame
 
 class DataFrame(ttk.LabelFrame):
+    def __init__(self,master):
+        super().__init__(master)
+        self.active_item = tk.StringVar()
+        self.framelabel = tk.Label(self,textvariable=self.active_item)
+        self.configure(labelwidget=self.framelabel)
+        self.tree = ttk.Treeview(self,show="tree",selectmode="extended")
+        self.tree.pack(**pack_left)
+        self.scrollbar = tk.Scrollbar(self)
+        self.scrollbar.pack(**pack_scroll)
+        scrollconfig(self.tree,self.scrollbar)
+        self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
+        self.tree.bind("<Double-1>",self.doubleclick_callback)
+        self.tree.bind("<Control-.>",self.copy_selected_to)
     def update_view(self):
         print("DataFrame View Update")
         self.tree.delete(*self.tree.get_children())
@@ -377,20 +390,6 @@ class DataFrame(ttk.LabelFrame):
             path = item_values[1]
             print("path:",path)
             subprocess.run("explorer /select,\"{}\"".format(path),shell=True)
-    def __init__(self,master):
-        super().__init__(master)
-        self.active_item = tk.StringVar()
-        self.framelabel = tk.Label(self,textvariable=self.active_item)
-        self.configure(labelwidget=self.framelabel)
-        self.tree = ttk.Treeview(self,show="tree",selectmode="extended")
-        self.tree.pack(**pack_left)
-        self.scrollbar = tk.Scrollbar(self)
-        self.scrollbar.pack(**pack_scroll)
-        scrollconfig(self.tree,self.scrollbar)
-        self.tree.bind("<<TreeviewSelect>>",self.selection_callback)
-        self.tree.bind("<Double-1>",self.doubleclick_callback)
-        self.tree.bind("<Control-.>",self.copy_selected_to)
-        
     def copy_selected_to(self,*event_or_none):
         t = filedialog.askdirectory()
         print("t:",t)
@@ -495,15 +494,16 @@ class MainFrame(tk.Frame):
 class App(tk.Tk):
     def update_ui(self):
         print("Updating UI")
-        self.mainframe.filterframe.keyframe.update_view()
-        self.mainframe.filterframe.notecountframe.update_view()
-        self.mainframe.filterframe.different_notesframe.update_view()
-        self.mainframe.filterframe.different_timesframe.update_view()
-        self.mainframe.filterframe.trackcountframe.update_view()
+        ff = self.mainframe.filterframe
+        ff.keyframe.update_view()
+        ff.notecountframe.update_view()
+        ff.different_notesframe.update_view()
+        ff.different_timesframe.update_view()
+        ff.trackcountframe.update_view()
         self.mainframe.dataframe.update_view()
     def __init__(self):
         super().__init__()
-        self.geometry("1200x1000")
+        self.geometry("1600x1200")
         self.topframe = tk.Frame(self)
         self.topframe.pack(fill="both",expand=True,side="top")
         self.bottomframe = tk.Frame(self)
